@@ -414,9 +414,9 @@ rownames(csZhang) = colnames(X)
 
 
 
-## Figure 2b - cell-type proportions for different deconvolution algorithms with Darmanis markers
+## Figure 4 - cell-type proportions for different deconvolution algorithms with Darmanis markers
 
-```{r Figure2b_proportionDarmanis, fig.width = 5, fig.height = 5}
+```{r Figure4x_proportionDarmanis, fig.width = 5, fig.height = 5}
 u = intersect(rownames(IHCprops),colnames(dsaDarmanis))
 
 d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
@@ -447,9 +447,9 @@ ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot
 ```
 
 
-## Figure 2a - Correlations of cell-type proportions with IHC with Darmanis markers
+## Figure Supp 4c - Correlations of cell-type proportions with IHC with Darmanis markers
 
-```{r Figure2a_correlationDarmanis, fig.width = 5, fig.height = 5}
+```{r FigureS4c_correlationDarmanis, fig.width = 5, fig.height = 5}
 markerGene = t(geneExpr[c("RBFOX3","GFAP","AIF1","OLIG2","CD34"),])
 colnames(markerGene) = c('neuro','astro','microglia','oligo','endo')  
 
@@ -646,10 +646,10 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 
 
 
-## Figure Supp 2b - Zhang proportions
+## Figure 2b - Zhang proportions
 
 
-```{r FigureS2b_proportionsZhang,fig.width = 5, fig.height = 5}
+```{r Figure2b_proportionsZhang,fig.width = 5, fig.height = 5}
 u = intersect(rownames(IHCprops),colnames(dsaZhang))
 
 d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
@@ -677,9 +677,9 @@ ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot
 ```
 
 
-## Figure Supp 2a - Zhang correlation
+## Figure 2a - Zhang correlation
 
-```{r FigureS2a_correlationsZhang, fig.width = 5, fig.height = 5}
+```{r Figure2a_correlationsZhang, fig.width = 5, fig.height = 5}
 markerGene = t(geneExpr[c("RBFOX3","GFAP","AIF1","OLIG2","CD34"),])
 colnames(markerGene) = c('neuro','astro','microglia','oligo','endo')  
 
