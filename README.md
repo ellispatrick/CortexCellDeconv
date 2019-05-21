@@ -15,7 +15,7 @@ The IHC images can be found at [neurons](https://www.dropbox.com/s/k1lq99b8hmpgy
 CellTypeDeconvAnalysis contains the R script DeconvAnalysis.Rmd which can be used to generate all of the figures from the manuscript. This folder also contains all of the necassary data.
 
 
-![alt text](https://github.com/ellispatrick/CortexCellDeconv/raw/master/CellTypeDeconvAnalysis/figures/Figure2b_proportionDarmanis-1.png "Figure 2b")
+![alt text](https://github.com/ellispatrick/CortexCellDeconv/raw/master/CellTypeDeconvAnalysis/figures/Figure3b_proportionDarmanis-1.png "Figure 23b")
 
 
 
