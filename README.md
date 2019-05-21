@@ -1,4 +1,4 @@
-# Deconvolution of cellular heterogeneity in brain transcriptomes (2018)
+# Deconvolution of cellular heterogeneity in brain transcriptomes
 
 This repository contains the R scripts necessary to replicate the figures in this manuscript.
 
