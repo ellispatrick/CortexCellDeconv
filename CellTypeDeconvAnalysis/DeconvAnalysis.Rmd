@@ -1,0 +1,1500 @@
+---
+title: "Cell-Type Deconvolution Analysis"
+author: "Ellis Patrick"
+date: "August, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, dev=c('png','pdf','svg'),fig.path='figures/')
+```
+
+# Load libraries
+
+```{r}
+library(MASS)
+library(tidyverse)
+library(edgeR)
+library(limma)
+library(markerGeneProfile)
+library(dtangle)
+library(declassification)
+library(glmnet)
+library(amritr)
+library(RColorBrewer)
+library(SuppDists)
+library(grid)
+library(gplots)
+library(plotrix)
+
+
+```
+
+
+# Read in gene expression data
+
+
+```{r readData, echo=FALSE}
+#Read in pathological data
+pathoVar = read.delim('Data/pathoVariables.txt', sep = "\t")
+
+
+#Read in gene expression data
+geneExpr = read.delim('Data/geneExpr.txt', sep = "\t", check.names = FALSE)
+geneResid = geneExpr - rowMeans(geneExpr)
+
+
+# Read in IHC proportions.
+IHCneuro = as.matrix(read.delim('Data/IHC.neuro.txt', sep = "\t", check.names = FALSE))[1,]
+IHCneuro = IHCneuro[intersect(names(IHCneuro),colnames(geneResid))]
+
+IHCastro = as.matrix(read.delim('Data/IHC.astro.txt', sep = "\t", check.names = FALSE))[1,]
+IHCastro = IHCastro[intersect(names(IHCastro),colnames(geneResid))]
+
+IHCmicroglia = as.matrix(read.delim('Data/IHC.microglia.txt', sep = "\t", check.names = FALSE))[1,]
+IHCmicroglia = IHCmicroglia[intersect(names(IHCmicroglia),colnames(geneResid))]
+
+IHColigo = as.matrix(read.delim('Data/IHC.oligo.txt', sep = "\t", check.names = FALSE))[1,]
+IHColigo = IHColigo[intersect(names(IHColigo),colnames(geneResid))]
+
+IHCendo = as.matrix(read.delim('Data/IHC.endo.txt', sep = "\t", check.names = FALSE))[1,]
+IHCendo = IHCendo[intersect(names(IHCendo),colnames(geneResid))]
+
+
+#Read in gene modules
+module = read.delim('Data/moduleGenes.txt')
+mod2sym = split(module$symbol,module$cluster)
+mod2sym = lapply(mod2sym,intersect,rownames(geneResid))
+mod2sym = mod2sym[unlist(lapply(mod2sym,length))>19]
+
+
+#Calculate average standardised expression for each module
+S = apply(geneResid,1,sd)
+Dat = geneResid/S
+modResid = do.call('rbind',lapply(mod2sym,function(x)apply(Dat[intersect(x,rownames(Dat)),],2,mean,na.rm = TRUE)))
+
+
+```
+
+# Cell-types
+
+## Figure 1b - Proportions sum to one.
+
+```{r Figure1b_IHCestimates, fig.height = 7,fig.width= 7}
+int = unique(c(names(IHCneuro),names(IHCmicroglia),names(IHCastro),names(IHColigo),names(IHCendo)))
+
+IHCprops = data.frame(neuro = IHCneuro[int], astro = IHCastro[int], microglia = IHCmicroglia[int], oligo = IHColigo[int], endo = IHCendo[int], row.names = int)
+
+
+x = t(IHCprops[order(IHCprops$neuro),])
+x = x[,!is.na(colSums(x))]
+
+barplot(x, legend.text = colnames(IHCprops),args.legend = list(x='bottomright', bg = 'white'),col = c('#fbb4ae','#b3cde3','#ccebc5','#decbe4','#fed9a6'),xaxt='n', ylab = "Proportions") 
+
+```
+
+
+
+
+
+## Proportion of variance explained by cells
+
+```{r proportionVarianceExplained}
+df = IHCprops
+r2 = apply(geneResid[,rownames(df)],1,function(x){
+ summary(lm(as.numeric(x)~.,df))$r.squared
+    })
+
+# hist(r2)
+mean(r2)
+
+```
+
+
+
+## Figure 1c - Genes correlated with cell-types
+
+```{r Figure1c_GeneCorrelations, fig.height=3.5, fig.width=3.5}
+ PVAL = apply(geneResid[,rownames(IHCprops)],1,function(y){
+    fit = summary(lm(as.numeric(y)~.,IHCprops))
+    pf(fit$fstatistic[1],fit$fstatistic[2],fit$fstatistic[3], lower.tail = FALSE)
+  })
+  
+ 
+ ggplot(data.frame(pval = PVAL),aes(x = pval))+geom_histogram(bins = 20, boundary=0,linetype=1, alpha=.25, color="gray50", fill="gray70")+theme_classic() + ylab("Count") + xlab("P-value") + ggtitle("Genes associated with cell-types") + xlim(0,1) +
+     scale_y_continuous(expand = expand_scale(mult = c(0, .1)))
+
+ 
+```
+
+
+
+## Supplementary Figure 1 - IHC estimates correlate modules
+
+IHC estimates correlate with expression levels of genes modules that are enriched for cell-type specific markers
+
+
+```{r FigureSupp1_moduleVsProportion, fig.width=11.5, fig.height=6.8}
+col = col2rgb('steelblue1')
+col1 = rgb(col[1],col[2],col[3],maxColorValue =255,alpha = 120)
+col = col2rgb('steelblue2')
+col2 = rgb(col[1],col[2],col[3],maxColorValue =255)
+col = col2rgb('steelblue3')
+col3 = rgb(col[1],col[2],col[3],maxColorValue =255)
+
+par(mfrow = c(2,3))
+
+i = "21"
+u = intersect(names(IHCneuro),colnames(modResid))
+y = IHCneuro[u]
+plot(modResid[i,u],y,xlab = paste('Average module',i,'expression'),ylab = 'Proportion of neurons',col =col1,pch = 19,main = 'Proportion of neurons vs neuronal module')
+points(modResid[i,u],y, col =col2,pch = 1)
+ct = cor.test(modResid[i,u],y, method = 'spearman')
+mtext(paste('Correlation =',signif(ct$estimate,2),', p-value =',signif(ct$p.value,2)),cex = 0.7)
+grid(lty = 2)
+abline(rlm(y~modResid[i,u]),col = col3)
+
+i = "106"
+u = intersect(names(IHCastro),colnames(modResid))
+y = IHCastro[u]
+plot(modResid[i,u],y,xlab = paste('Average module',i,'expression'),ylab = 'Proportion of astrocytes',col =col1,pch = 19,main = 'Proportion of astrocytes vs astrocyte module')
+points(modResid[i,u],y, col =col2,pch = 1)
+ct = cor.test(modResid[i,u],y, method = 'spearman')
+mtext(paste('Correlation =',signif(ct$estimate,2),', p-value =',signif(ct$p.value,2)),cex = 0.7)
+grid(lty = 2)
+abline(rlm(y~modResid[i,u]),col = col3)
+
+i = "116"
+u = intersect(names(IHCmicroglia),colnames(modResid))
+y = IHCmicroglia[u]
+plot(modResid[i,u],y,xlab = paste('Average module',i,'expression'),ylab = 'Proportion of microglia',col =col1,pch = 19,main = 'Proportion of microglia vs microglial module')
+points(modResid[i,u],y, col =col2,pch = 1)
+ct = cor.test(modResid[i,u],y, method = 'spearman')
+mtext(paste('Correlation =',signif(ct$estimate,2),', p-value =',signif(ct$p.value,2)),cex = 0.7)
+grid(lty = 2)
+abline(rlm(y~modResid[i,u]),col = col3)
+
+i = "110"
+u = intersect(names(IHColigo),colnames(modResid))
+y = IHColigo[u]
+plot(modResid[i,u],y,xlab = paste('Average module',i,'expression'),ylab = 'Proportion of oligodendrocytes',col =col1,pch = 19,main = 'Proportion of oligodendrocytes vs oligodendrocyte module')
+points(modResid[i,u],y, col =col2,pch = 1)
+ct = cor.test(modResid[i,u],y, method = 'spearman')
+mtext(paste('Correlation =',signif(ct$estimate,2),', p-value =',signif(ct$p.value,2)),cex = 0.7)
+grid(lty = 2)
+abline(rlm(y~modResid[i,u]),col = col3)
+
+
+i = "112"
+u = intersect(names(IHCendo),colnames(modResid))
+y = IHCendo[u]
+plot(modResid[i,u],y,xlab = paste('Average module',i,'expression'),ylab = 'Proportion of endothelial cells',col =col1,pch = 19,main = 'Proportion of endothelial cells vs endothelial module')
+points(modResid[i,u],y, col =col2,pch = 1)
+ct = cor.test(modResid[i,u],y, method = 'spearman')
+mtext(paste('Correlation =',signif(ct$estimate,2),', p-value =',signif(ct$p.value,2)),cex = 0.7)
+grid(lty = 2)
+abline(rlm(y~modResid[i,u]),col = col3)
+
+
+
+```
+
+
+
+# Read in marker data
+
+```{r readDarmanis}
+
+## Load Darmanis and DarmanisCells from GSE67835 single cell data.
+
+load("Data/GSE67835.RData")
+
+int = intersect(rownames(geneExpr),rownames(Darmanis))
+
+y <- DGEList(counts= Darmanis[int,])
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Darmanis[,1]/sum(Darmanis[,1])),0.75))
+Darmanis <- cpm(y, log=FALSE)
+
+DarmanisMean = sapply(unique(DarmanisCells),function(x)rowMeans(Darmanis[,names(which(DarmanisCells==x))]))
+
+
+int = intersect(rownames(geneExpr),rownames(DarmanisMean))
+
+
+design = model.matrix(~.-1,data.frame(cell= DarmanisCells[colnames(Darmanis)]))
+colnames(design) = gsub('cell','',colnames(design))
+ 
+v <- voom(Darmanis[int,rownames(design)], design, plot=FALSE)
+fit <- lmFit(v, design)
+x = sapply(colnames(design),function(x)paste(x,'-(',paste(colnames(design)[colnames(design)!=x],collapse = "+"),')/4',sep = ''))
+con = makeContrasts(contrasts = x,levels = colnames(design))
+fit = contrasts.fit(fit,con)
+fit <- eBayes(fit, robust=TRUE)
+
+DarmanisMarkers = NULL
+for(i in 1:ncol(design)){
+  x = fit$coef[p.adjust(fit$p.v[,i],'fdr')<0.05,i]
+  DarmanisMarkers[[colnames(design)[i]]] =  names(head(sort(-x[x>0]),100))
+ }
+unlist(lapply(DarmanisMarkers,length))
+
+DarmanisMarkersFull = NULL
+for(i in 1:ncol(design)){
+  x = fit$coef[p.adjust(fit$p.v[,i],'fdr')<0.05,i]
+  DarmanisMarkersFull[[colnames(design)[i]]] =  names(sort(-x[x>0]))
+ }
+unlist(lapply(DarmanisMarkersFull,length))
+
+```
+
+
+
+
+```{r readZhang}
+Zhang = read.delim('Data/Ben_Barres_HumanOnly.txt')
+Zhanggenes = as.character(Zhang[,1])
+Zhang = sapply(Zhang[,-1],function(x)as.numeric(as.character(x)))
+rownames(Zhang) = Zhanggenes
+
+pureSamplesZhang = list(neuro = grep('Neuro',colnames(Zhang)), astro = grep('mature.astro',colnames(Zhang)), microglia = grep('Micro',colnames(Zhang)),oligo = grep('Oligo',colnames(Zhang)),endo = grep('Endo',colnames(Zhang)))
+
+## Reorder samples
+Zhang = do.call('cbind',lapply(pureSamplesZhang,function(x)Zhang[,x]))
+
+int = intersect(rownames(geneExpr),rownames(Zhang))
+
+y <- DGEList(counts=Zhang[int,])
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Zhang[,1]/sum(Zhang[,1])),0.75))
+Zhang <- cpm(y, log=FALSE)
+
+pureSamplesZhang = list(neuro = grep('neuro',colnames(Zhang)), astro = grep('mature.astro',colnames(Zhang)), microglia = grep('Micro',colnames(Zhang)),oligo = grep('Oligo',colnames(Zhang)),endo = grep('Endo',colnames(Zhang)))
+
+
+ZhangMean = do.call('cbind',lapply(pureSamplesZhang,function(x)if(length(x)==1){Zhang[,x]} else{rowMeans(Zhang[,x])}))
+
+
+int = intersect(rownames(geneExpr),rownames(ZhangMean))
+
+
+design = model.matrix(~.-1,data.frame(cell= rep(names(pureSamplesZhang),unlist(lapply(pureSamplesZhang,length)))))
+colnames(design) = gsub('cell','',colnames(design))
+ 
+v <- voom(Zhang[int,], design, plot=FALSE)
+fit <- lmFit(v, design)
+x = sapply(colnames(design),function(x)paste(x,'-(',paste(colnames(design)[colnames(design)!=x],collapse = "+"),')/4',sep = ''))
+con = makeContrasts(contrasts = x,levels = colnames(design))
+fit = contrasts.fit(fit,con)
+fit <- eBayes(fit, robust=TRUE)
+
+ZhangMarkers = NULL
+for(i in 1:ncol(design)){
+  x = fit$coef[p.adjust(fit$p.v[,i],'bonferroni')<0.05,i]
+  ZhangMarkers[[colnames(design)[i]]] = names(head(sort(-x[x>0]),100))
+ }
+unlist(lapply(ZhangMarkers,length))
+
+
+ZhangMarkersFull = NULL
+for(i in 1:ncol(design)){
+  x = fit$coef[p.adjust(fit$p.v[,i],'fdr')<0.05,i]
+  ZhangMarkersFull[[colnames(design)[i]]] =  names(sort(-x[x>0]))
+ }
+unlist(lapply(ZhangMarkersFull,length))
+
+```
+
+
+
+```{r readNeuroExpresso}
+
+data(mouseMarkerGenes)
+
+mouseHumanGeneTable = mouseMarkerGenes$Midbrain$Dopaminergic %>% homologene::mouse2human()
+allHumanDopaGenes = mouseHumanGeneTable %$% humanGene
+mouseHumanGeneTable
+
+neuroExpresso = NULL
+neuroExpresso[['astro']] = mouseMarkerGenes$Cortex$Astrocyte %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix()
+
+neuroExpresso[['endo']] = mouseMarkerGenes$Cortex$Endothelial %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix()
+
+neuroExpresso[['microglia']] = mouseMarkerGenes$Cortex$Microglia %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix()
+
+neuroExpresso[['oligo']] = mouseMarkerGenes$Cortex$Oligo %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix()
+
+neuroExpresso[['neuro']] = c(mouseMarkerGenes$Cortex$GabaPV %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix(), mouseMarkerGenes$Cortex$GabaRelnCalb %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix(), mouseMarkerGenes$Cortex$GabaVIPReln %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix(), mouseMarkerGenes$Cortex$Pyramidal %>% homologene::mouse2human() %>% dplyr::select(humanGene) %>% as.matrix())
+
+neuroExpresso = lapply(neuroExpresso,intersect,rownames(geneResid))
+
+```
+
+
+# Deconvolution
+
+
+```{r deconvolveDarmanis}
+sce = DarmanisMean
+ge = geneExpr
+
+commongenes <- intersect (rownames(ge), rownames(sce))
+ge <- ge[pmatch(commongenes, rownames(ge)), ]
+sce <- sce[pmatch(commongenes, rownames(sce)), ]
+
+y <- cbind(sce, 2^ge)
+y <- DGEList(counts= y)
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Darmanis[,1]/sum(Darmanis[,1])),0.75))
+y <- cpm(y, log=FALSE)
+
+#y = normalizeQuantiles(y)
+
+pure_samples = as.list(1:5)
+names(pure_samples) = colnames(y)[1:5]
+
+markers = lapply(DarmanisMarkers,intersect,rownames(y))
+
+dtDarmanis <- dtangle(log2(t(y)), pure_samples=pure_samples, markers = markers[names(pure_samples)])$estimates
+
+
+dsaDarmanis<-getcompM(geneResid,method="DSA",marker=markers)
+
+dat = t(y[unlist(markers),])
+lsDarmanis = apply(dat[-c(1:5),],1,function(x)coef(glmnet(t(dat[1:5,unlist(markers)]),x,lambda = 0, lower.limits = 0,intercept = FALSE,standardize = FALSE))[-1,])
+lsDarmanis = t(lsDarmanis)/colSums(lsDarmanis)
+
+Z = y[unlist(DarmanisMarkers),-c(1:5)]
+X = y[unlist(DarmanisMarkers),1:5]
+X <- (X - mean(X))/sd(as.vector(X))
+csDarmanis = sapply(as.data.frame(Z),function(z) CoreAlg(X,(z - mean(z))/sd(z))$w)
+rownames(csDarmanis) = colnames(X)
+
+```
+
+
+
+
+
+
+
+```{r deconvolveZhang}
+sce = ZhangMean
+ge = geneExpr
+
+commongenes <- intersect (rownames(ge), rownames(sce))
+ge <- ge[pmatch(commongenes, rownames(ge)), ]
+sce <- sce[pmatch(commongenes, rownames(sce)), ]
+
+y <- cbind(sce, 2^ge)
+y <- DGEList(counts= y)
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Zhang[,1]/sum(Zhang[,1])),0.75))
+y <- cpm(y, log=FALSE)
+
+pure_samples = as.list(1:5)
+names(pure_samples) = colnames(y)[1:5]
+
+markers = lapply(ZhangMarkers,intersect,rownames(y))
+
+dtZhang <- dtangle(log2(t(y)), pure_samples=pure_samples, markers = markers[names(pure_samples)] )$estimates
+
+
+dsaZhang<-getcompM(geneResid,method="DSA",marker=ZhangMarkers)
+
+dat = t(y[unlist(markers),])
+lsZhang = apply(dat[-c(1:5),],1,function(x)coef(glmnet(t(dat[1:5,unlist(markers)]),x,lambda = 0, lower.limits = 0,intercept = FALSE,standardize = FALSE))[-1,])
+lsZhang = t(lsZhang)/colSums(lsZhang)
+
+Z = y[unlist(ZhangMarkers),-c(1:5)]
+X = y[unlist(ZhangMarkers),1:5]
+X <- (X - mean(X))/sd(as.vector(X))
+csZhang = sapply(as.data.frame(Z),function(z) CoreAlg(X,(z - mean(z))/sd(z))$w)
+rownames(csZhang) = colnames(X)
+
+```
+
+
+
+## Figure 2b - cell-type proportions for different deconvolution algorithms with Darmanis markers
+
+```{r Figure2b_proportionDarmanis, fig.width = 5, fig.height = 5}
+u = intersect(rownames(IHCprops),colnames(dsaDarmanis))
+
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'NNLS',lsDarmanis[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'cibersort',t(csDarmanis[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSA',t(dsaDarmanis[,u]))
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'dtangle',dtDarmanis[u,])
+df5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+cmap = c('Neurons','Astrocytes','Microglia','Oligodendrocytes','Endothelial cells')
+names(cmap) = c('neuro','astro','microglia','oligo','endo')
+
+df = rbind(df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal = brewer.pal(8, 'Set2')
+col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
+
+
+ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+```
+
+
+## Figure 2a - Correlations of cell-type proportions with IHC with Darmanis markers
+
+```{r Figure2a_correlationDarmanis, fig.width = 5, fig.height = 5}
+markerGene = t(geneExpr[c("RBFOX3","GFAP","AIF1","OLIG2","CD34"),])
+colnames(markerGene) = c('neuro','astro','microglia','oligo','endo')  
+
+modCell = t(modResid[c("21","106","116","110","112"),])
+colnames(modCell) = c('neuro','astro','microglia','oligo','endo')  
+
+  
+d = data.frame(Subject = u,Method = 'Single gene',markerGene[u,])
+dfmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+df = rbind(dfmarker,df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-7,'IHC'])
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+```
+
+
+
+
+
+
+
+## Comparison of NeuroExpresso marker proportions
+
+```{r NeuroExpressoProportions, fig.height=5, fig.width=5}
+
+
+markers = neuroExpresso
+dsaNeuroExpresso<-getcompM(geneResid,method="DSA",marker=markers)
+
+d = data.frame(Subject = u,Method = 'neuroExpresso',t(dsaNeuroExpresso[,u]))
+dfNE = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+df = rbind(dfNE,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal2 = brewer.pal(8, 'Set2')
+pal3 = brewer.pal(6, 'Oranges')
+col = c( IHC = pal2[1], neuroExpresso = pal3[5])
+
+
+ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+```
+
+
+
+
+## NeuroExpresso correlations
+
+
+```{r NeuroExpressoCorrelations, fig.height=5, fig.width=5}
+
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-7,'IHC'])
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+
+
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+
+
+
+```
+
+
+
+
+
+
+
+## Figure Supp 7a - Robust marker proportions
+
+```{r FigureS7a_markerRobustProportions, fig.width = 5, fig.height = 5}
+
+markers = lapply(DarmanisMarkersFull,function(x)x)
+dsaDarmanis1000<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:500])
+dsaDarmanis500<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:200])
+dsaDarmanis200<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:75])
+dsaDarmanis75<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:50])
+dsaDarmanis50<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:25])
+dsaDarmanis25<-getcompM(geneResid,method="DSA",marker=markers)
+
+markers = lapply(DarmanisMarkersFull,function(x)x[1:5])
+dsaDarmanis5<-getcompM(geneResid,method="DSA",marker=markers)
+
+
+u = intersect(rownames(IHCprops),colnames(dsaDarmanis))
+
+d = data.frame(Subject = u,Method = 'DSA1000',t(dsaDarmanis1000[,u]))
+df1000 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA500',t(dsaDarmanis500[,u]))
+df500 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA200',t(dsaDarmanis200[,u]))
+df200 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA100',t(dsaDarmanis[,u]))
+df100 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA75',t(dsaDarmanis75[,u]))
+df75 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA50',t(dsaDarmanis50[,u]))
+df50 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA25',t(dsaDarmanis25[,u]))
+df25 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+d = data.frame(Subject = u,Method = 'DSA5',t(dsaDarmanis5[,u]))
+df5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+df = rbind(df5,df25,df50,df75,df100,df200,df500,df1000,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal2 = brewer.pal(8, 'Set2')
+pal3 = brewer.pal(9, 'Blues')
+col = c( IHC = pal2[1],DSA1000 = pal3[8],DSA500 = pal3[7],DSA200 = pal3[6], DSA100 = pal3[5], DSA75 = pal3[4], DSA50 = pal3[3], DSA25 = pal3[2], DSA5 = pal3[1] )
+
+
+ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+
+
+
+```
+
+
+## Figure Supp 7b - Robust marker correlations
+
+
+```{r FigureS7b_robustMarkersCorrelations, fig.width = 5, fig.height = 5}
+
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-7,'IHC'])
+cordf
+
+pal2 = brewer.pal(8, 'Set2')
+pal3 = brewer.pal(9, 'Blues')
+col = c( IHC = pal2[1],DSA1000 = pal3[8],DSA500 = pal3[7],DSA200 = pal3[6], DSA100 = pal3[5], DSA75 = pal3[4], DSA50 = pal3[3], DSA25 = pal3[2], DSA5 = pal3[1] )
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+
+
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+
+
+
+```
+
+
+
+
+
+
+## Figure Supp 2b - Zhang proportions
+
+
+```{r FigureS2b_proportionsZhang,fig.width = 5, fig.height = 5}
+u = intersect(rownames(IHCprops),colnames(dsaZhang))
+
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'NNLS',lsZhang[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'cibersort',t(csZhang[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'dtangle',dtZhang[u,])
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSA',t(dsaZhang[,u]))
+df5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+df = rbind(df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal = brewer.pal(8, 'Set2')
+col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
+
+ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+```
+
+
+## Figure Supp 2a - Zhang correlation
+
+```{r FigureS2a_correlationsZhang, fig.width = 5, fig.height = 5}
+markerGene = t(geneExpr[c("RBFOX3","GFAP","AIF1","OLIG2","CD34"),])
+colnames(markerGene) = c('neuro','astro','microglia','oligo','endo')  
+
+
+d = data.frame(Subject = u,Method = 'Single gene',markerGene[u,])
+dfmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'modules',modCell[u,])
+dfmod = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+df = rbind(dfmarker,df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-7,'IHC'])
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+
+```
+
+
+
+
+## Figure Supp 3 - Correlation between methods
+
+
+```{r FigureS3_methodCor, fig.height = 7, fig.width = 8}
+
+
+u = colnames(geneResid)
+df2 = data.frame(Method = 'NNLS',Subject = u,lsZhang[u,])
+df3 = data.frame(Method = 'cibersort',Subject = u,t(csZhang[,u]))
+df4 = data.frame(Method = 'dtangle',Subject = u,dtZhang[u,])
+df5 = data.frame(Method = 'DSA',Subject = u,t(dsaZhang[,u]))
+dfmarker = data.frame(Method = 'Single gene',Subject = u,markerGene[u,])
+dfmod = data.frame(Method = 'modules',Subject = u,modCell[u,])
+
+
+df = rbind(dfmod,dfmarker,df2,df3,df4,df5)
+colnames(df)[!colnames(df)%in%c('Subject','Method')] = cmap[colnames(df)[!colnames(df)%in%c('Subject','Method')]]
+
+dfGather = gather(df,Cell, value, -Method,-Subject)
+dfGather$cellMethod = gsub(' ','.',paste(dfGather$Cell,dfGather$Method,sep = '.'))
+dfGather = dplyr::select(dfGather, -Cell, -Method)
+
+dfSpread = spread(dfGather,cellMethod,value)
+dfSpread = dplyr::select(dfSpread, -Subject)
+spreadCor = cor(dfSpread)
+
+lmat = cbind(c(0,4),c(0,2),c(3,1))
+
+lwid = c(0.25,0.01,3)
+lhei = c(0.2,2)
+
+colh = colorRampPalette(c("blue","white","red"))(500)[101:400]
+
+heatmap.2(spreadCor,,dendrogram = "none",Rowv = NULL,Colv = "Rowv",
+trace = "none",scale = "none",offsetRow = 0.3, offsetCol = 0.3,
+colsep = c(6,12,18,24),sepwidth=c(0.05,0.05), rowsep = c(6,12,18,24), margin = c(12,12),key = F,lmat = lmat, lwid = lwid,lhei = lhei,col = colh)
+
+col.labels<-c("-1","0","1")
+ # this will put the labels at the intersections
+ # col.labels<-c("","Cold","","Warm","","Warmer","","Hot","")
+ color.legend(-.07,.3,-.045,.8,col.labels,colh,gradient="y")
+
+
+
+```
+
+
+
+## Figure Supp 2 - Correlation between markers
+
+
+```{r FigureS2_markerCor, fig.height = 7, fig.width = 8}
+
+
+
+u = rownames(IHCprops)
+df2 = data.frame(Method = 'Darmanis',Subject = u,t(dsaDarmanis)[u,])
+df3 = data.frame(Method = 'Zhang',Subject = u,t(dsaZhang)[u,])
+df4 = data.frame(Method = 'NeuroExpresso',Subject = u,t(dsaNeuroExpresso)[u,])
+dfmarker = data.frame(Method = 'Single gene',Subject = u,markerGene[u,])
+
+
+df = rbind(df2,df3,df4)
+colnames(df)[!colnames(df)%in%c('Subject','Method')] = cmap[colnames(df)[!colnames(df)%in%c('Subject','Method')]]
+
+dfGather = gather(df,Cell, value, -Method,-Subject)
+dfGather$cellMethod = gsub(' ','.',paste(dfGather$Cell,dfGather$Method,sep = '.'))
+dfGather = dplyr::select(dfGather, -Cell, -Method)
+
+dfSpread = spread(dfGather,cellMethod,value)
+dfSpread = dplyr::select(dfSpread, -Subject)
+spreadCor = cor(dfSpread)
+
+lmat = cbind(c(0,4),c(0,2),c(3,1))
+
+lwid = c(0.25,0.01,3)
+lhei = c(0.2,2)
+
+colh = colorRampPalette(c("blue","white","red"))(500)[101:400]
+
+heatmap.2(spreadCor,,dendrogram = "none",Rowv = NULL,Colv = "Rowv",
+trace = "none",scale = "none",offsetRow = 0.3, offsetCol = 0.3,
+colsep = c(3,6,9,12),sepwidth=c(0.05,0.05), rowsep = c(3,6,9,12), margin = c(14,14),key = F,lmat = lmat, lwid = lwid,lhei = lhei,col = colh)
+
+col.labels<-c("-1","0","1")
+ # this will put the labels at the intersections
+ # col.labels<-c("","Cold","","Warm","","Warmer","","Hot","")
+ color.legend(-.07,.3,-.045,.8,col.labels,colh,gradient="y")
+
+
+ 
+
+```
+
+
+## Figure Supp 4 - Correlation of different types of markers with IHC - DSA
+
+
+```{r FigureS4_markersDSA}
+u = rownames(IHCprops)
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Darmanis',Subject = u,t(dsaDarmanis)[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Zhang',Subject = u,t(dsaZhang)[u,])
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'NeuroExpresso',Subject = u,t(dsaNeuroExpresso)[u,])
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+cmap = c('Neurons','Astrocytes','Microglia','Oligodendrocytes','Endothelial cells')
+names(cmap) = c('neuro','astro','microglia','oligo','endo')
+
+df = rbind(df1,df2,df3,df4)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+
+pal = c(brewer.pal(8, 'Set2')[1],brewer.pal(9, 'Set1')[c(8,2)],brewer.pal(6, 'Oranges')[5])
+col = c(IHC = pal[1], Darmanis = pal[2], Zhang = pal[3], NeuroExpresso = pal[4] )
+
+
+```
+
+
+
+```{r FigureS4_markersCorDSAIHC}
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-1,'IHC'])
+cordf
+
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+```
+
+
+
+## Figure Supp 4 - Correlation of different types of markers with IHC - dtangle
+
+
+
+```{r markersDtangle}
+u = rownames(IHCprops)
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Darmanis',Subject = u,dtDarmanis[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Zhang',Subject = u,dtZhang[u,])
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+cmap = c('Neurons','Astrocytes','Microglia','Oligodendrocytes','Endothelial cells')
+names(cmap) = c('neuro','astro','microglia','oligo','endo')
+
+df = rbind(df1,df2,df3)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+
+pal = c(brewer.pal(8, 'Set2')[1],brewer.pal(9, 'Set1')[c(8,2)],brewer.pal(6, 'Oranges')[5])
+col = c(IHC = pal[1], Darmanis = pal[2], Zhang = pal[3] )
+
+
+
+```
+
+
+
+```{r FigureS4_markersCorDtangleIHC}
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete'))[-1,'IHC'])
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+```
+
+
+
+
+# Correlation simulation
+
+
+```{r simulation}
+samp = read.csv('Data/human_LGN_2018-06-14_samples-columns.csv')
+gene =read.csv('Data/human_LGN_2018-06-14_genes-rows.csv')
+#exons = read.csv('Data/human_LGN_2018-06-14_exon-matrix.csv', row.names = 1)
+#write.csv(exons[1:25000,], file = 'Data/human_LGN_2018-06-14_exon-matrix_1.csv')
+#write.csv(exons[25001:50281,], file = 'Data/human_LGN_2018-06-14_exon-matrix_2.csv')
+exons1 = read.csv('Data/human_LGN_2018-06-14_exon-matrix_1.csv', row.names = 1)
+exons2 = read.csv('Data/human_LGN_2018-06-14_exon-matrix_2.csv', row.names = 1)
+exons = rbind(exons1,exons2)
+rownames(exons) = gene$gene
+
+samp$cluster4 = as.character(samp$cluster)
+samp$cluster4[grep('Inh',samp$cluster4)] = 'Neuron'
+samp$cluster4[grep('Exc',samp$cluster4)] = 'Neuron'
+samp$cluster4[grep('Astro',samp$cluster4)] = 'Astro'
+samp$cluster4[grep('OPC',samp$cluster4)] = 'Oligo'
+samp$cluster4[grep('Olig',samp$cluster4)] = 'Oligo'
+
+
+set.seed(123)
+types = split(samp$sample_name,samp$cluster4)
+typesR = samp$cluster4
+names(typesR) = samp$sample_name
+geneSim = matrix(0,nrow(exons), 70) 
+ran = matrix(0,length(types),70)
+rownames(ran) = names(types)
+for(i in 1:ncol(geneSim)){
+  s = sample(colnames(exons),ncol(exons),replace = TRUE)
+  geneSim[,i] = rowSums(exons[,s])
+  tab = table(typesR[s])
+  ran[names(tab),i] = tab
+  }
+
+geneSim1 = geneSim
+mS = mean(colSums(geneSim1))
+x = geneSim1
+x[] = rnbinom(rep(1,length(geneSim1)),mu = x/mS*20000000, size = 50)
+
+geneSim = x
+
+rownames(geneSim) = rownames(exons)
+colnames(geneSim) = 1:ncol(geneSim)
+
+geneSim = geneSim[rowMeans(geneSim)>20,]
+
+sce = do.call('cbind',lapply(types,function(x)rowSums(exons[,x])))
+sce = sce[apply(sce,1,max)<10000,]
+
+
+ge = geneSim
+
+commongenes <- intersect (rownames(ge), rownames(sce))
+ge <- ge[pmatch(commongenes, rownames(ge)), ]
+sce <- sce[pmatch(commongenes, rownames(sce)), ]
+
+library(edgeR)
+y <- cbind(sce, ge)
+y <- DGEList(counts= y)
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(ge[,1]/sum(ge[,1])),0.75))
+y <- cpm(y, log=FALSE)
+
+library(dtangle)
+pure_samples = as.list(1:ncol(sce))
+names(pure_samples) = colnames(y)[1:ncol(sce)]
+
+
+dtSim <- dtangle(log2(t(y+0.1)), pure_samples=pure_samples, n_markers = 100)$estimates
+
+
+df = data.frame(dtSim[-(1:length(types)),])
+
+
+diag2 = diag(cor(t(ran),(dtSim[-(1:ncol(dtSim)),]),method = 'spearman'))
+
+
+
+
+```
+
+
+
+
+## Figure Supp 6 - Quantifying the upper bound of correlation coefficient using artificial mixtures.
+
+```{r FigureS6_cellSimCells, fig.width = 5, fig.height = 5}
+ct = names(diag2)
+ct = gsub('Astro','Astrocytes',ct)
+ct = gsub('Oligo','Oligodendrocytes',ct)
+ct = gsub('Micro C1QB','Microglia',ct)
+ct = gsub('Neuron','Neurons',ct)
+ct = gsub('no class','Unassigned',ct)
+
+
+ggplot(data.frame(Correlation = diag2, Celltype =ct),aes(x = Celltype,y = Correlation))+geom_bar(stat = 'identity') + theme_classic() +  theme(axis.title.x = element_text(vjust=5, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1)) + labs(x = 'Cell-type')
+
+```
+
+
+
+
+
+# MSE
+
+
+## Figure Supp 9 - MSE of proportions for Darmanis markers
+
+```{r FigureS9_mseDarmanis}
+
+
+
+mse = function(x){
+  m = matrix(0,ncol(x),ncol(x))
+  colnames(m) = rownames(m) = colnames(x)
+  for(k in colnames(x)){
+    for(j in colnames(x)){
+    m[j,k] = mean((x[,k]-x[,j])^2,na.rm = TRUE)
+    }
+  }
+  m
+} 
+
+
+
+
+
+
+u = rownames(lsDarmanis)
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'NNLS',lsDarmanis[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'cibersort',t(csDarmanis[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSA',t(dsaDarmanis[,u]))
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'dtangle',dtDarmanis[u,])
+df5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Single gene',Subject = u,markerGene[u,])
+dfmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+
+
+df = rbind(dfmarker,df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+msedf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+                                                filter(variable==x) %>%
+                                                dplyr::select(-Subject,-variable) %>%
+                                                mse())[-6,'IHC'])
+
+
+
+
+
+
+
+set.seed(51773)
+sampMSE2 = list()
+
+for(i in 1:10000){
+  u2 = sample(rownames(lsDarmanis),length(u),replace = FALSE)
+  d = data.frame(Subject = u,Method = 'NNLS',lsDarmanis[u2,])
+  DF2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'cibersort',t(csDarmanis[,u2]))
+  DF3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'DSA',t(dsaDarmanis[,u2]))
+  DF4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'dtangle',dtDarmanis[u2,])
+  DF5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'Single gene',markerGene[u2,])
+  DFmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+  
+  df = rbind(DFmarker,DF2,DF3,DF4,DF5,df1)
+  levels(df$variable) = cmap[levels(df$variable)]
+  df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+  rownames(df) = NULL
+  
+  sampMSE2[[i]] =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+                                                          filter(variable==x) %>%
+                                                          dplyr::select(-Subject,-variable) %>%
+                                                          mse())[-6,'IHC'])
+}
+
+
+msePval = lapply(sampMSE2,function(x)x<msedf)
+msePval = Reduce('+',msePval)
+msePval = msePval/length(sampMSE2)
+
+df = gather(data.frame(msePval[-1,],Method = rownames(msePval)[-1]),Cells,MSE,-Method)
+
+col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
+
+ggplot(df, aes(x = Cells,y = -log10(MSE),fill = Method))+geom_bar(position = 'dodge', stat = 'identity')+
+  geom_hline(yintercept = -log10(0.05), linetype = 'dashed')+scale_fill_manual(values = col)+ labs(x = 'Cell', y = expression("-log"[10]~"(p-value)"))+theme_classic()+
+  theme(axis.text.x = element_text(angle = 45,hjust = 1))
+
+
+```
+
+
+
+
+## Figure Supp 9 - MSE of proportions for Zhang markers
+
+
+
+```{r FigureS9_mseZhang}
+
+
+u = rownames(lsDarmanis)
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'NNLS',lsZhang[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'cibersort',t(csZhang[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSA',t(dsaZhang[,u]))
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'dtangle',dtZhang[u,])
+df5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Method = 'Single gene',Subject = u,markerGene[u,])
+dfmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+
+
+df = rbind(dfmarker,df2,df3,df4,df5,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+msedf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+                                                filter(variable==x) %>%
+                                                dplyr::select(-Subject,-variable) %>%
+                                                mse())[-6,'IHC'])
+
+
+
+
+
+
+
+
+set.seed(51773)
+sampMSE2 = list()
+
+for(i in 1:10000){
+  u2 = sample(rownames(lsZhang),length(u),replace = FALSE)
+  d = data.frame(Subject = u,Method = 'NNLS',lsZhang[u2,])
+  DF2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'cibersort',t(csZhang[,u2]))
+  DF3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'DSA',t(dsaZhang[,u2]))
+  DF4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'dtangle',dtZhang[u2,])
+  DF5 = reshape2::melt(d,id.vars = c('Subject','Method'))
+  d = data.frame(Subject = u,Method = 'Single gene',markerGene[u2,])
+  DFmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+  
+  df = rbind(DFmarker,DF2,DF3,DF4,DF5,df1)
+  levels(df$variable) = cmap[levels(df$variable)]
+  df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+  rownames(df) = NULL
+  
+  sampMSE2[[i]] =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+                                                          filter(variable==x) %>%
+                                                          dplyr::select(-Subject,-variable) %>%
+                                                          mse())[-6,'IHC'])
+}
+
+
+
+msePval = lapply(sampMSE2,function(x)x<msedf)
+msePval = Reduce('+',msePval)
+msePval = msePval/length(sampMSE2)
+
+df = gather(data.frame(msePval[-1,],Method = rownames(msePval)[-1]),Cells,MSE,-Method)
+
+col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
+
+ggplot(df, aes(x = Cells,y = -log10(MSE),fill = Method))+geom_bar(position = 'dodge', stat = 'identity')+
+  geom_hline(yintercept = -log10(0.05), linetype = 'dashed')+scale_fill_manual(values = col)+ labs(x = 'Cell', y = expression("-log"[10]~"(p-value)"))+theme_classic()+
+  theme(axis.text.x = element_text(angle = 45,hjust = 1))
+
+```
+
+
+
+
+
+# RIN vs no RIN correction
+
+```{r deconvolveZhangRIN}
+geneExprRaw = read.delim('Data/geneExprRaw.txt', sep = "\t", check.names = FALSE)
+
+sce = ZhangMean
+ge = geneExprRaw
+
+commongenes <- intersect (rownames(ge), rownames(sce))
+ge <- ge[pmatch(commongenes, rownames(ge)), ]
+sce <- sce[pmatch(commongenes, rownames(sce)), ]
+
+y <- cbind(sce, ge)
+y <- DGEList(counts= y)
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Zhang[,1]/sum(Zhang[,1])),0.75))
+y <- cpm(y, log=FALSE)
+
+#y = normalizeQuantiles(y)
+
+pure_samples = as.list(1:5)
+names(pure_samples) = colnames(y)[1:5]
+
+markers = lapply(ZhangMarkers,intersect,rownames(y))
+
+dtZhangRaw <- dtangle(log2(t(y)), pure_samples=pure_samples, markers = markers[names(pure_samples)])$estimates
+
+gR = log2(y[,-c(1:5)])
+dsaZhangRaw<-getcompM(gR,method="DSA",marker=markers)
+
+dat = t(y[unlist(markers),])
+lsZhangRaw = apply(dat[-c(1:5),],1,function(x)coef(glmnet(t(dat[1:5,unlist(markers)]),x,lambda = 0, lower.limits = 0,intercept = FALSE,standardize = FALSE))[-1,])
+lsZhangRaw = t(lsZhangRaw)/colSums(lsZhangRaw)
+
+Z = y[unlist(markers),-c(1:5)]
+X = y[unlist(markers),1:5]
+X <- (X - mean(X))/sd(as.vector(X))
+csZhangRaw = sapply(as.data.frame(Z),function(z) CoreAlg(X,(z - mean(z))/sd(z))$w)
+rownames(csZhangRaw) = colnames(X)
+
+```
+
+
+
+
+
+
+
+## Figure Supp 5 - cell-type proportions for different deconvolution algorithms with Zhang markers Raw
+
+```{r FigureS5_proportionRawRIN, fig.width = 5, fig.height = 5}
+u = intersect(rownames(IHCprops),colnames(dsaZhang))
+
+d = data.frame(Subject = u,Method = 'IHC',Type = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'NNLS',Type = 'Residual',lsZhang[u,])
+df2 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'cibersort',Type = 'Residual',t(csZhang[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'DSA',Type = 'Residual',t(dsaZhang[,u]))
+df4 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'dtangle',Type = 'Residual',dtZhang[u,])
+df5 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+
+d = data.frame(Subject = u,Method = 'NNLS',Type = 'Raw', lsZhangRaw[u,])
+df6 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'cibersort',Type = 'Raw',t(csZhangRaw[,u]))
+df7 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'DSA',Type = 'Raw',t(dsaZhangRaw[,u]))
+df8 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+d = data.frame(Subject = u,Method = 'dtangle',Type = 'Raw',dtZhangRaw[u,])
+df9 = reshape2::melt(d,id.vars = c('Subject','Method','Type'))
+
+
+cmap = c('Neurons','Astrocytes','Microglia','Oligodendrocytes','Endothelial cells')
+names(cmap) = c('neuro','astro','microglia','oligo','endo')
+
+df = rbind(df2,df3,df4,df5,df6,df7,df8,df9,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal = brewer.pal(8, 'Set2')
+col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
+
+colR = c(Residual = 'purple', Raw = 'blue',IHC = pal[1] )
+
+
+ggplot(df,aes(x = variable,y = value,fill = Method,color = Type))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_fill_manual(values = col)+scale_colour_manual(values = colR)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.31, 0.83),legend.key.size = unit(0.17, "in"),legend.box = 'horizontal')
+
+
+```
+
+
+
+```{r FigureS5_RawRINcor}
+
+dfC = df
+dfC$Comb = paste(df$Method,df$Type,sep = '_')
+cordf =sapply(levels(dfC$variable),function(x){z = dfC %>% 
+  dplyr::select(-Method,-Type) %>%
+  spread(Comb, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'complete')
+  z = z[,'IHC_IHC']
+    })
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Comb','Celltype'))
+cordf2$Method = unlist(lapply(strsplit(as.character(cordf2$Comb),'_'),function(x)x[1]))
+cordf2$Type = unlist(lapply(strsplit(as.character(cordf2$Comb),'_'),function(x)x[2]))
+cordf2 = filter(cordf2, Method!='IHC')
+ggplot(cordf2,aes(x = Celltype,y = value,fill = Method,colour = Type))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=colR) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.3,0.86), legend.key.size=unit(0.15,"in"),legend.box='horizontal')+ guides(colour = guide_legend(override.aes = list(fill = "white")))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Calculate proportions for different neuron subsets
+
+
+```{r deconvolveDarmanisExInh}
+
+msub = as.matrix(read.delim('Data/darmanis_neuronal_subtype_markers.txt',sep = ' ', header = FALSE))
+msub = split(msub[,1],paste('c',msub[,2],sep = ''))
+
+msubExInh = list()
+msubExInh[['Ex']] = unlist(msub[c('c4','c7')])
+msubExInh[['Inh']] = unlist(msub[!names(msub)%in%c('c4','c7')])
+
+dm = names(which(apply(DarmanisMean,1,which.max)==4))
+msubExInhFilt = lapply(msubExInh,intersect,dm)
+
+
+msubExInh = c(DarmanisMarkers[-4],msubExInh)
+msubExInhFilt = c(DarmanisMarkers[-4],msubExInhFilt)
+
+
+
+sce = DarmanisMean
+ge = geneExpr
+
+commongenes <- intersect (rownames(ge), rownames(sce))
+ge <- ge[pmatch(commongenes, rownames(ge)), ]
+sce <- sce[pmatch(commongenes, rownames(sce)), ]
+
+y <- cbind(sce, 2^ge)
+y <- DGEList(counts= y)
+y <- calcNormFactors(y,method = 'TMM', Acutoff =  quantile(log2(Darmanis[,1]/sum(Darmanis[,1])),0.75))
+y <- cpm(y, log=FALSE)
+
+#y = normalizeQuantiles(y)
+
+pure_samples = as.list(1:5)
+names(pure_samples) = colnames(y)[1:5]
+
+markers = lapply(msubExInh,intersect,rownames(y))
+dsaDarmanisExInh <-getcompM(geneResid,method="DSA",marker=markers)
+dsaDarmanisExInh = rbind(dsaDarmanisExInh,neuro=dsaDarmanisExInh['Ex',]+dsaDarmanisExInh['Inh',])
+
+markers = lapply(msubExInhFilt,intersect,rownames(y))
+dsaDarmanisExInhFilt <-getcompM(geneResid,method="DSA",marker=markers)
+dsaDarmanisExInhFilt = rbind(dsaDarmanisExInhFilt,neuro=dsaDarmanisExInhFilt['Ex',]+dsaDarmanisExInhFilt['Inh',])
+
+```
+
+
+
+
+## Figure 3b - cell-type proportions for neuronal subsets.
+
+```{r Figure3b_proportionDarmanisExInh, fig.width = 5, fig.height = 5}
+u = intersect(rownames(IHCprops),colnames(dsaDarmanis))
+ 
+
+d = data.frame(Subject = u,Method = 'IHC',IHCprops[u,])
+df1 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSA',t(dsaDarmanis[,u]))
+df2 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSAsub',t(dsaDarmanisExInh[,u]))
+df3 = reshape2::melt(d,id.vars = c('Subject','Method'))
+d = data.frame(Subject = u,Method = 'DSAsubFilt',t(dsaDarmanisExInhFilt[,u]))
+df4 = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+
+cmap = c('Neurons','Astrocytes','Microglia','Oligodendrocytes','Endothelial cells','Neurons.Ex','Neurons.Inh')
+names(cmap) = c('neuro','astro','microglia','oligo','endo','Ex','Inh')
+
+
+df = rbind(df2,df3,df4,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+pal = brewer.pal(8, 'Set2')
+col = c(IHC = pal[1], DSA = pal[2], DSAsub = pal[8],DSAsubFilt = brewer.pal(8, 'Set3')[8], 'Single gene' = pal[7] )
+
+
+ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+
+
+```
+
+
+## Figure 3a - Correlations of cell-type proportions with IHC for neuronal subsets.
+
+```{r Figure3a_correlationDarmanisExInh, fig.width = 5, fig.height = 5}
+markerGene = t(geneExpr[c("RBFOX3","GFAP","AIF1","OLIG2","CD34"),])
+colnames(markerGene) = c('neuro','astro','microglia','oligo','endo')  
+
+
+d = data.frame(Subject = u,Method = 'Single gene',markerGene[u,])
+dfmarker = reshape2::melt(d,id.vars = c('Subject','Method'))
+
+dfInh = df1[df1$variable=='neuro',]
+dfInh$variable = 'Inh'
+dfEx = df1[df1$variable=='neuro',]
+dfEx$variable = 'Ex'
+
+
+
+df = rbind(dfmarker,df2,df3,df4,dfInh,dfEx,df1)
+levels(df$variable) = cmap[levels(df$variable)]
+df$variable = factor(df$variable,levels = sort(levels(df$variable)))
+
+cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
+  filter(variable==x) %>%
+  dplyr::select(-Subject,-variable) %>%
+  cor(method = 'spearman',use = 'pairwise.complete'))[-7,'IHC'])
+cordf
+
+
+cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
+cordf2 = filter(cordf2, Method!='IHC')
+ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+
+
+```
+
+
+## Supp Figure S10 - Heatmap of neuron subset markers
+
+
+```{r FigureS10_cellHeat}
+
+library(pheatmap)
+markerSub = lapply(msubExInh,intersect,rownames(DarmanisMean))
+dup = unlist(markerSub)[duplicated(unlist(markerSub))]
+markerSub = lapply(markerSub,function(x)x[!x%in%dup])
+
+scell = unlist(rep(names(markerSub),lapply(markerSub,length)))
+pheatmap(DarmanisMean[unlist(markerSub),],scale = 'row',cluster_rows = FALSE,annotation_row = data.frame(cellType = scell,row.names = unlist(markerSub)))
+
+```
+
+
+## Supp Figure S10b - Heatmap of filtered neuron subset markers
+
+
+```{r FigureS10_cellHeatFilt}
+
+library(pheatmap)
+markerSub = lapply(msubExInhFilt,intersect,rownames(DarmanisMean))
+dup = unlist(markerSub)[duplicated(unlist(markerSub))]
+markerSub = lapply(markerSub,function(x)x[!x%in%dup])
+
+scell = unlist(rep(names(markerSub),lapply(markerSub,length)))
+pheatmap(DarmanisMean[unlist(markerSub),],scale = 'row',cluster_rows = FALSE,annotation_row = data.frame(cellType = scell,row.names = unlist(markerSub)))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
