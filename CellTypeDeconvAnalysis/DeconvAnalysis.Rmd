@@ -28,6 +28,7 @@ library(SuppDists)
 library(grid)
 library(gplots)
 library(plotrix)
+library(openxlsx)
 
 
 ```
@@ -96,6 +97,14 @@ barplot(x, legend.text = colnames(IHCprops),args.legend = list(x='bottomright', 
 ```
 
 
+```{r Fig1b_xlsx}
+
+wb <- createWorkbook("Figures.xlsx")
+addWorksheet(wb, 'Figure1b')
+writeData(wb,  'Figure1b', x,rowNames = TRUE) 
+
+
+```
 
 
 
@@ -127,6 +136,15 @@ mean(r2)
      scale_y_continuous(expand = expand_scale(mult = c(0, .1)))
 
  
+```
+
+
+```{r Fig1c_xlsx}
+
+addWorksheet(wb, 'Figure1c')
+writeData(wb,  'Figure1c', data.frame(pval = PVAL),rowNames = TRUE,colNames=FALSE) 
+
+
 ```
 
 
@@ -201,6 +219,15 @@ abline(rlm(y~modResid[i,u]),col = col3)
 
 ```
 
+```{r FigS1_xlsx}
+u = intersect(rownames(modResid),names(IHCendo))
+df = rbind(modResid[c('21','106','116','110','112'),],endo = IHCendo[u],oligo = IHColigo[u],microglia = IHCmicroglia[u],neuro = IHCneuro[u],astro = IHCastro[u])
+
+addWorksheet(wb, 'FigureS1')
+writeData(wb,  'FigureS1', df,rowNames = TRUE,colNames=TRUE) 
+
+
+```
 
 
 # Read in marker data
@@ -478,6 +505,13 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 ```
 
 
+```{r FigS4_xlsx}
+
+addWorksheet(wb, 'FigureS4')
+writeData(wb,  'FigureS4', cordf,rowNames = TRUE,colNames=TRUE) 
+
+
+```
 
 
 
@@ -613,6 +647,16 @@ ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot
 ```
 
 
+```{r FigS7a_xlsx}
+
+addWorksheet(wb, 'FigureS7a')
+writeData(wb,  'FigureS7a', df,rowNames = TRUE,colNames=TRUE) 
+
+
+```
+
+
+
 ## Figure Supp 7b - Robust marker correlations
 
 
@@ -643,6 +687,13 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 
 
 
+```{r FigS7b_xlsx}
+
+addWorksheet(wb, 'FigureS7b')
+writeData(wb,  'FigureS7b', cordf,rowNames = TRUE,colNames=TRUE) 
+
+
+```
 
 
 
@@ -672,6 +723,15 @@ pal = brewer.pal(8, 'Set2')
 col = c(IHC = pal[1], DSA = pal[2], dtangle = pal[3], cibersort = pal[4], NNLS = pal[5], modules = pal[6], 'Single gene' = pal[7] )
 
 ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot()+theme_classic(16)+ylab('Proportion')+xlab('Cell-type')+scale_colour_manual(values = col)+scale_fill_manual(values = col)+ theme(axis.title.x = element_text(vjust=8, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1), legend.title = element_text(size=16,vjust=-1),legend.text = element_text(size = 12),legend.position = c(0.2, 0.83),legend.key.size = unit(0.17, "in"))
+
+
+```
+
+
+```{r Fig2b_xlsx}
+
+addWorksheet(wb, 'Figure2b')
+writeData(wb,  'Figure2b', df,rowNames = TRUE,colNames=TRUE) 
 
 
 ```
@@ -708,6 +768,15 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 
 ```
 
+
+
+```{r Fig2a_xlsx}
+
+addWorksheet(wb, 'Figure2a')
+writeData(wb,  'Figure2a', cordf,rowNames = TRUE,colNames=TRUE) 
+
+
+```
 
 
 
@@ -759,10 +828,21 @@ col.labels<-c("-1","0","1")
 
 
 
-## Figure Supp 2 - Correlation between markers
+```{r FigS3_xlsx}
+
+addWorksheet(wb, 'FigureS3')
+writeData(wb,  'FigureS3', spreadCor,rowNames = TRUE,colNames=TRUE) 
 
 
-```{r FigureS2_markerCor, fig.height = 7, fig.width = 8}
+```
+
+
+
+
+## Correlation between markers
+
+
+```{r FigureX_markerCor, fig.height = 7, fig.width = 8}
 
 
 
@@ -804,6 +884,8 @@ col.labels<-c("-1","0","1")
  
 
 ```
+
+
 
 
 ## Figure Supp 4 - Correlation of different types of markers with IHC - DSA
@@ -853,6 +935,15 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 ```
 
 
+```{r FigS4a_xlsx}
+
+addWorksheet(wb, 'FigureS4a')
+writeData(wb,  'FigureS4a', cordf,rowNames = TRUE,colNames=TRUE) 
+
+
+```
+
+
 
 ## Figure Supp 4 - Correlation of different types of markers with IHC - dtangle
 
@@ -884,7 +975,7 @@ col = c(IHC = pal[1], Darmanis = pal[2], Zhang = pal[3] )
 
 
 
-```{r FigureS4_markersCorDtangleIHC}
+```{r FigureS4b_markersCorDtangleIHC}
 
 cordf =sapply(levels(df$variable),function(x)(df %>% spread(Method, value) %>%
   filter(variable==x) %>%
@@ -896,6 +987,15 @@ cordf
 cordf2 = reshape2::melt(cordf,c('Method','Celltype'))
 cordf2 = filter(cordf2, Method!='IHC')
 ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_bar(width=0.5, position = position_dodge(width=0.8), stat = "identity") + theme_classic(16) + ylab("Correlation coefficient") + xlab('Cell-type') + scale_fill_manual(values=col) + scale_colour_manual(values=col) + geom_hline(yintercept=qSpearman(0.95,length(u)),linetype="dotted") +  annotate(geom="text",y=qSpearman(0.95, length(u))+0.01, x=5.9, label="    p=0.05", color="black",size = 2.75,hjust = 1,vjust = 0) + ylim(-0.02,0.6) + theme(axis.title.x=element_text(vjust=8,hjust = 0.4), axis.text.x=element_text(angle=45,hjust=1), legend.title=element_text(size=14,vjust=-1), legend.text=element_text(size=12), legend.position=c(0.85,0.86), legend.key.size=unit(0.15,"in"))
+
+```
+
+
+```{r FigS4b_xlsx}
+
+addWorksheet(wb, 'FigureS4b')
+writeData(wb,  'FigureS4b', cordf,rowNames = TRUE,colNames=TRUE) 
+
 
 ```
 
@@ -999,6 +1099,15 @@ ct = gsub('no class','Unassigned',ct)
 
 
 ggplot(data.frame(Correlation = diag2, Celltype =ct),aes(x = Celltype,y = Correlation))+geom_bar(stat = 'identity') + theme_classic() +  theme(axis.title.x = element_text(vjust=5, hjust=0.4),axis.text.x = element_text(angle = 45,hjust = 1)) + labs(x = 'Cell-type')
+
+```
+
+
+```{r FigS6_xlsx}
+
+addWorksheet(wb, 'FigureS6')
+writeData(wb,  'FigureS6', data.frame(Correlation = diag2, Celltype =ct),rowNames = TRUE,colNames=TRUE) 
+
 
 ```
 
@@ -1107,6 +1216,14 @@ ggplot(df, aes(x = Cells,y = -log10(MSE),fill = Method))+geom_bar(position = 'do
 ```
 
 
+```{r FigS9b_xlsx}
+
+addWorksheet(wb, 'FigureS9b')
+writeData(wb,  'FigureS9b', df,rowNames = TRUE,colNames=TRUE) 
+
+
+```
+
 
 
 ## Figure Supp 9 - MSE of proportions for Zhang markers
@@ -1193,6 +1310,14 @@ ggplot(df, aes(x = Cells,y = -log10(MSE),fill = Method))+geom_bar(position = 'do
 ```
 
 
+
+```{r FigS9a_xlsx}
+
+addWorksheet(wb, 'FigureS9a')
+writeData(wb,  'FigureS9a', df,rowNames = TRUE,colNames=TRUE) 
+
+
+```
 
 
 
@@ -1289,6 +1414,9 @@ ggplot(df,aes(x = variable,y = value,fill = Method,color = Type))+geom_boxplot()
 
 
 
+
+
+
 ```{r FigureS5_RawRINcor}
 
 dfC = df
@@ -1316,11 +1444,13 @@ ggplot(cordf2,aes(x = Celltype,y = value,fill = Method,colour = Type))+ geom_bar
 
 
 
+```{r FigS5_xlsx}
+
+addWorksheet(wb, 'FigureS5')
+writeData(wb,  'FigureS5', cordf,rowNames = TRUE,colNames=TRUE) 
 
 
-
-
-
+```
 
 
 
@@ -1417,6 +1547,18 @@ ggplot(df,aes(x = variable,y = value,color = Method,fill = Method))+geom_boxplot
 ```
 
 
+
+```{r Fig3b_xlsx}
+
+addWorksheet(wb, 'Figure3b')
+writeData(wb,  'Figure3b', df,rowNames = TRUE,colNames=TRUE) 
+
+
+```
+
+
+
+
 ## Figure 3a - Correlations of cell-type proportions with IHC for neuronal subsets.
 
 ```{r Figure3a_correlationDarmanisExInh, fig.width = 5, fig.height = 5}
@@ -1454,6 +1596,16 @@ ggplot(cordf2,aes(x = Celltype,y = value,colour = Method,fill = Method))+ geom_b
 ```
 
 
+
+```{r Fig3a_xlsx}
+
+addWorksheet(wb, 'Figure3a')
+writeData(wb,  'Figure3a', cordf,rowNames = TRUE,colNames=TRUE) 
+
+
+```
+
+
 ## Supp Figure S10 - Heatmap of neuron subset markers
 
 
@@ -1466,6 +1618,15 @@ markerSub = lapply(markerSub,function(x)x[!x%in%dup])
 
 scell = unlist(rep(names(markerSub),lapply(markerSub,length)))
 pheatmap(DarmanisMean[unlist(markerSub),],scale = 'row',cluster_rows = FALSE,annotation_row = data.frame(cellType = scell,row.names = unlist(markerSub)))
+
+```
+
+
+```{r FigS10a_xlsx}
+
+addWorksheet(wb, 'FigureS10a')
+writeData(wb,  'FigureS10a', DarmanisMean[unlist(markerSub),],rowNames = TRUE,colNames=TRUE) 
+
 
 ```
 
@@ -1486,12 +1647,18 @@ pheatmap(DarmanisMean[unlist(markerSub),],scale = 'row',cluster_rows = FALSE,ann
 ```
 
 
+```{r FigS10b_xlsx}
+
+addWorksheet(wb, 'FigureS10b')
+writeData(wb,  'FigureS10b', DarmanisMean[unlist(markerSub),],rowNames = TRUE,colNames=TRUE) 
 
 
+```
 
+```{r}
+saveWorkbook(wb, file = "Figures.xlsx", overwrite = TRUE)
 
-
-
+```
 
 
 
